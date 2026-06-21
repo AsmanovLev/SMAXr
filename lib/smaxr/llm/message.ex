@@ -16,7 +16,17 @@ defmodule Smaxr.LLM.Message do
           tool_results: [{String.t(), String.t(), String.t()}] | nil
         }
 
-  defstruct [:role, :content, :name, :tool_calls, :tool_call_id, :thinking, :signature, tool_results: nil]
+  defstruct [
+    :role,
+    :content,
+    :name,
+    :tool_calls,
+    :tool_call_id,
+    :thinking,
+    :signature,
+    :m_id,
+    tool_results: nil
+  ]
 
   @spec system(String.t()) :: t()
   def system(text), do: %__MODULE__{role: :system, content: text}

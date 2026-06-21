@@ -78,13 +78,13 @@ defmodule Smaxr.LLM.OpenAI do
 
   # Convert Message to OpenAI-format message map. Handles tool_results
   # by emitting one "tool" role message per result (OpenAI spec).
-  defp to_message_map(%Message{role: :tool, tool_results: [_ | _] = results}) do
+  defp to_message_map(%Message{role: :tool, tool_results: [_ | _] = results} = m) do
     Enum.map(results, fn {content, id, name} ->
       %{
         role: "tool",
         tool_call_id: id || "tool_unknown",
         name: name,
-        content: content || ""
+        content: inject_m_tag(content || "", m.m_id)
       }
     end)
   end
@@ -92,7 +92,20 @@ defmodule Smaxr.LLM.OpenAI do
   # Enumerable as flat, and maps are Enumerable — so a map return value
   # would be coerced via Map.to_list into [{"k","v"}, ...] tuples, which
   # Jason cannot encode. Wrap the single map in a 1-element list.
-  defp to_message_map(%Message{} = m), do: [Message.to_map(m)]
+  defp to_message_map(%Message{} = m), do: [inject_m_to_map(Message.to_map(m), m.m_id)]
+
+  # Prepend a hidden marker that names this message by m_id. The
+  # system prompt tells the model to use this format for its `compress`
+  # tool calls and not to echo it back.
+  defp inject_m_to_map(map, nil), do: map
+  defp inject_m_to_map(%{"content" => c} = map, id) when is_binary(c) do
+    Map.put(map, "content", inject_m_tag(c, id))
+  end
+  defp inject_m_to_map(map, _id), do: map
+
+  defp inject_m_tag(content, id) do
+    "<dcp-message-id>m#{id}</dcp-message-id>\n#{content}"
+  end
 
   defp parse_result(%{"choices" => [choice | _], "usage" => usage}) do
     raw_tc = choice["message"]["tool_calls"]

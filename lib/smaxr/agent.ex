@@ -566,7 +566,67 @@ defmodule Smaxr.Agent do
     api_results =
       Enum.map(Enum.reverse(results), fn {text, id, name, _args, _result} -> {text, id, name} end)
 
-    push(acc, Message.tool_results(api_results))
+    acc = push(acc, Message.tool_results(api_results))
+
+    # Apply any pending compress request from this turn. The compress
+    # tool stashes {topic, ranges} in Process dict; we splice those
+    # ranges out of the message history now and inject a single
+    # system message with the topic and summaries.
+    apply_pending_compress(acc)
+  end
+
+  # Apply the compress tool's pending replacement. Ranges are 1-indexed
+  # positions in `state.messages` (m1, m2, ...). We work from the
+  # highest range to the lowest so earlier indices don't shift under us.
+  # Overlapping or out-of-bounds ranges are dropped silently — the
+  # model will see the LLM-generated summary in the next turn
+  # regardless.
+  defp apply_pending_compress(state) do
+    case Process.get(:smaxr_compress) do
+      nil ->
+        state
+
+      {topic, ranges} ->
+        Process.delete(:smaxr_compress)
+        sorted = Enum.sort_by(ranges, fn {s, _e, _} -> -s end)
+        new_messages = Enum.reduce(sorted, state.messages, &splice_range/2)
+        # Re-assign m_ids so the model can still reference messages
+        # by their (now-different) positions in the next turn.
+        renumbered =
+          new_messages
+          |> Enum.with_index(1)
+          |> Enum.map(fn {m, idx} -> %{m | m_id: idx} end)
+
+        chat_log(state.user_id, "compress", "topic=#{topic} ranges=#{length(ranges)}")
+
+        compressed_block = compress_block_message(topic, ranges)
+        final = renumbered ++ [compressed_block]
+        %{state | messages: final}
+    end
+  end
+
+  defp splice_range({start_idx, end_idx, _summary}, messages) do
+    before = Enum.take(messages, start_idx - 1)
+    after_ = Enum.drop(messages, end_idx)
+    before ++ after_
+  end
+
+  defp compress_block_message(topic, ranges) do
+    body =
+      ranges
+      |> Enum.map_join("\n\n", fn {s, e, summary} ->
+        "## m#{s}..m#{e}\n\n#{summary}"
+      end)
+
+    Message.system("""
+    [Compressed conversation section — topic: #{topic}]
+
+    #{body}
+
+    End of compressed section. Use these summaries as context; the raw
+    messages in this range have been removed. Re-invoke tools (read_file,
+    terminal) if you need full content from earlier turns.
+    """)
   end
 
   defp build_annotation([tc]) do
@@ -715,7 +775,8 @@ defmodule Smaxr.Agent do
   # ── Helpers ──────────────────────────────────────────────────────
 
   defp push(state, message) do
-    %{state | messages: state.messages ++ [message]}
+    next_id = length(state.messages) + 1
+    %{state | messages: state.messages ++ [%{message | m_id: next_id}]}
   end
 
   defp push_button(state, data) do
@@ -749,6 +810,17 @@ defmodule Smaxr.Agent do
       - Invoke multiple tools (be aware of tools are going to be executed in parralel)
       - Never end a turn with tool calls only — always follow up with a text reply.
       - Hard cap: max 3 tool calls per turn. If you need more, sequence them across turns.
+
+      ## Context management (DCP)
+      You operate in a context-constrained environment. Manage context continuously to avoid buildup. The `compress` tool replaces older, closed conversation content with technical summaries you write.
+
+      When to compress: a section is genuinely closed (research concluded, implementation verified, exploration exhausted) AND the raw content is no longer needed verbatim. Before compressing, ask: "Is this section closed enough to become summary-only right now?"
+
+      When NOT to compress: raw context is still needed for edits or precise references; the target is actively in progress; you may need exact code/errors in the immediate next steps.
+
+      Your summary must be EXHAUSTIVE — file paths, function signatures, decisions, constraints, key findings. Strip noise (failed attempts, verbose tool output) but preserve every fact that maintains context integrity. User intent must be preserved exactly — prefer direct quotes for short user messages.
+
+      `mN` ids in `<dcp-message-id>mNNNN</dcp-message-id>` style are environment-injected. Do not output them.
 
       ## Available tools
       #{tool_names}
