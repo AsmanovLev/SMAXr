@@ -1,0 +1,8 @@
+IO.inspect(Application.get_env(:smaxr, Smaxr.LLM.OpenAI, []), label: "LLM config")
+IO.inspect(Application.get_env(:smaxr, :"Elixir.Smaxr.LLM.OpenAI", []), label: "LLM config (atom)")
+IO.puts("Module exists: #{inspect(Code.ensure_loaded?(Smaxr.LLM.OpenAI))}")
+IO.inspect(Application.get_env(:smaxr, :proxy, ""), label: "proxy")
+IO.inspect(Application.get_env(:konsolidator, :proxy, ""), label: "kons proxy")
+IO.inspect(Application.get_env(:konsolidator, Konsolidator.Adapters.Telegram, []), label: "tg config")
+IO.inspect(Application.get_env(:konsolidator, :"Elixir.Konsolidator.Adapters.Telegram", []), label: "tg config (atom)")
+IO.puts("TG Module exists: #{inspect(Code.ensure_loaded?(Konsolidator.Adapters.Telegram))}")
