@@ -149,10 +149,13 @@ defmodule Smaxr.Agent do
   @impl true
   def handle_info({:turn_done, task_state, steps, sent}, state) do
     # Pull the updated messages/count from the task's working state.
+    # Always mark agent idle when a turn completes (any branch).
     state = %{
       state
       | messages: task_state.messages,
-        message_count: task_state.message_count
+        message_count: task_state.message_count,
+        busy: false,
+        cancel: false
     }
 
     was_cancelled = cancel_flag?(state.user_id)
