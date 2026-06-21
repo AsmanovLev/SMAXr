@@ -16,4 +16,4 @@ config :smaxr,
 config :smaxr, Smaxr.LLM.OpenAI,
   base_url: "https://opencode.ai/zen/go/v1",
   api_key: System.get_env("OPENCODE_API_KEY", ""),
-  default_model: System.get_env("SMAXR_MODEL", "minimax-m3")
+  default_model: System.get_env("SMAXR_MODEL", "deepseek-v4-flash")

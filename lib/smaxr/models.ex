@@ -103,7 +103,7 @@ defmodule Smaxr.Models do
 
   @spec current() :: String.t()
   def current do
-    Application.get_env(:smaxr, :default_model, "minimax-m3")
+    Application.get_env(:smaxr, :default_model, "deepseek-v4-flash")
   end
 
   @spec set_current(String.t()) :: :ok | {:error, :unknown_model}

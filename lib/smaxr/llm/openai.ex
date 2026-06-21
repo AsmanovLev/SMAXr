@@ -98,7 +98,7 @@ defmodule Smaxr.LLM.OpenAI do
     raw_tc = choice["message"]["tool_calls"]
     tool_calls = if raw_tc == [], do: nil, else: raw_tc
 
-    # Some models (minimax-m3, etc.) embed their thinking inside the
+    # Some models (deepseek-v4-flash, etc.) embed their thinking inside the
     # content as a <think>…</think> block. Strip it so the user only sees
     # the actual answer.
     raw_content = choice["message"]["content"] || ""

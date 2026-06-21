@@ -791,7 +791,7 @@ defmodule Smaxr.Agent do
 
   defp default_model do
     Application.get_env(:smaxr, Smaxr.LLM.OpenAI, [])
-    |> Keyword.get(:default_model, "minimax-m3")
+    |> Keyword.get(:default_model, "deepseek-v4-flash")
   end
 
   defp safe_send(adapter, user_id, content) do

@@ -15,7 +15,7 @@ config :konsolidator, :proxy, "socks5h://127.0.0.1:10808"
 
 config :smaxr,
   llm_provider: "openai",
-  default_model: "minimax-m3",
+  default_model: "deepseek-v4-flash",
   data_dir: "priv/smaxr",
   mcp_servers: []
 
