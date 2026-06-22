@@ -26,7 +26,9 @@ defmodule Smaxr.MixProject do
     [
       {:konsolidator, git: "https://github.com/AsmanovLev/konsolidator.git", branch: "win7-support"},
       {:req, "~> 0.5"},
-      {:phoenix_pubsub, "~> 2.1"}
+      {:phoenix_pubsub, "~> 2.1"},
+      {:finch, "~> 0.21.0", override: true},
+      {:castore, "~> 0.1"}
     ]
   end
 end
