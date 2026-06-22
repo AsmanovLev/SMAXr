@@ -12,6 +12,7 @@ defmodule Smaxr.Agent do
             message_count: 0,
             last_ref: nil,
             model: nil,
+            provider: nil,
             max_steps: 200,
             busy: false,
             cancel: false,
@@ -47,7 +48,7 @@ defmodule Smaxr.Agent do
   @impl true
   def init(user_id) do
     Registry.register(Smaxr.Registry, {:agent, user_id}, self())
-    state = %__MODULE__{user_id: user_id, model: default_model()}
+    state = %__MODULE__{user_id: user_id, model: default_model(), provider: Smaxr.Providers.current()}
     {:ok, state}
   end
 
@@ -466,14 +467,23 @@ defmodule Smaxr.Agent do
 
   defp call_llm(state, _step) do
     model = state.model || default_model()
+    provider_id = state.provider || Smaxr.Providers.current()
+    provider_mod = provider_module(provider_id)
     tools_specs = Smaxr.Tools.specs()
 
     {messages, nudge} = Smaxr.DCP.apply_strategies(state.messages)
     history = build_history(messages, nudge)
 
-    case Smaxr.LLM.OpenAI.call(model, history, tools: tools_specs) do
+    case provider_mod.call(model, history, tools: tools_specs) do
       {:ok, msg, usage} -> {:ok, msg, usage}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp provider_module(provider_id) do
+    case Enum.find(Smaxr.Providers.list(), fn p -> p.id == provider_id end) do
+      %{module: mod} -> mod
+      nil -> Smaxr.LLM.OpenAI
     end
   end
 

@@ -3,8 +3,8 @@ chcp 65001 >nul
 setlocal enabledelayedexpansion
 
 :: SMAXr - start script
-:: Loads .env (if present), starts the agent with Telegram adapter
-:: via konsolidator.
+:: Loads .env (if present), then opens a separate console window
+:: that runs the agent and shows live logs.
 
 set "TITLE=SMAXr Agent"
 title %TITLE%
@@ -30,7 +30,6 @@ set "PATH=D:\tools\Erlang\bin;D:\tools\Elixir\bin;%PATH%"
 :: dev mode for hot-reload (apply_patch)
 set "MIX_ENV=dev"
 
-:: Set MIX_ENV to dev (not prod) for hot-reload compatibility
 if defined SOCKS_PROXY (
     echo [%DATE% %TIME%] Proxy: %SOCKS_PROXY%
 ) else (
@@ -52,6 +51,8 @@ if not defined OPENCODE_API_KEY (
 echo [%DATE% %TIME%] Starting SMAXr with model %SMAXR_MODEL%...
 echo.
 
+:: Run the agent in this window. To detach into a new window, run this
+:: bat from a new terminal of your own (Windows Terminal / cmd).
 call elixir --sname smaxr_debug -S mix run --no-halt
 
 echo.

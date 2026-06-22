@@ -16,6 +16,8 @@ defmodule Smaxr.Commands do
       "model" => &cmd_model/2,
       "models" => &cmd_models/2,
       "provider" => &cmd_provider/2,
+      "providers" => &cmd_providers/2,
+      "providers" => &cmd_providers/2,
       "system" => &cmd_system/2,
       "maxsteps" => &cmd_maxsteps/2,
       "tools" => &cmd_tools/2,
@@ -89,7 +91,9 @@ defmodule Smaxr.Commands do
   # /sessions — list
   def cmd_sessions(_, state) do
     count = state.message_count
-    {:handled, "Active session.\nmessages: #{count}\nmodel: #{state.model}\n", state}
+    model = state.model || Smaxr.Models.current()
+    provider = state.provider || Smaxr.Providers.current()
+    {:handled, "Active session.\nmessages: #{count}\nmodel: #{model}\nprovider: #{provider}\n", state}
   end
 
   # /model — show or set (with validation against Smaxr.Models)
@@ -177,9 +181,49 @@ defmodule Smaxr.Commands do
     end
   end
 
-  # /provider — show only (setting requires config update)
-  def cmd_provider(_, state) do
-    {:handled, "provider: OpenCode (opencode.ai/zen/go/v1)", state}
+  # /provider — show or set (with validation against Smaxr.Providers)
+  def cmd_provider(args, state) do
+    case String.trim(args) do
+      "" ->
+        cur = state.provider || Smaxr.Providers.current()
+        {:handled, "provider: #{cur}\n(use `/providers` to list, `/provider <n|name>` to switch)", state}
+
+      query ->
+        case Smaxr.Providers.find(query) do
+          nil ->
+            hint =
+              Smaxr.Providers.list()
+              |> Enum.take(5)
+              |> Enum.map(& "#{&1.id} (#{&1.label})")
+              |> Enum.join(", ")
+
+            {:handled,
+             "❌ unknown provider: #{query}\nTry `/providers` (examples: #{hint}…)", state}
+
+          %{id: id, label: label} ->
+            :ok = Smaxr.Providers.set_current(id)
+            new_state = %{state | provider: id}
+            {:handled, "✅ provider set to #{id} (#{label})", new_state}
+        end
+    end
+  end
+
+  # /providers — list available providers
+  def cmd_providers(_, state) do
+    providers = Smaxr.Providers.list()
+    current = state.provider || Smaxr.Providers.current()
+
+    rows =
+      providers
+      |> Enum.map(fn p ->
+        marker = if p.id == current, do: "★", else: " "
+        "#{marker}  #{String.pad_trailing(p.id, 16)}  #{p.label}"
+      end)
+      |> Enum.join("\n")
+
+    header = "current: #{current}   total: #{length(providers)}"
+    footer = "\nusage: /provider <number|name>  e.g.  /provider 2   /provider anthropic"
+    {:handled, header <> "\n" <> rows <> footer, state}
   end
 
   # /system — show system prompt
@@ -213,7 +257,8 @@ defmodule Smaxr.Commands do
   def cmd_version(_, state) do
     sha = git_sha()
     model = state.model || "?"
-    {:handled, "SMAXr #{sha} (model: #{model})", state}
+    provider = state.provider || "?"
+    {:handled, "SMAXr #{sha} (model: #{model}, provider: #{provider})", state}
   end
 
   # /dcp — DCP control (stub)
@@ -250,7 +295,8 @@ defmodule Smaxr.Commands do
     /sessions — list sessions
     /model [name] — show/set model (e.g. `/model 4`, `/model kimi`, `/model glm-5.2`)
     /models [filter|refresh] — list available models
-    /provider — show provider
+    /provider [name] — show/set provider (e.g. `/provider anthropic`, `/provider 2`)
+    /providers — list available providers
     /system — show system prompt
     /maxsteps [n] — show/set max steps
     /tools — list tools

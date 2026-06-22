@@ -19,5 +19,22 @@ config :smaxr,
   data_dir: "priv/smaxr",
   mcp_servers: []
 
+# --- LLM Providers ---
+# Each provider has a unique id, a human-readable label, and the module
+# that implements the `Smaxr.LLM` behaviour (call/3).
+config :smaxr, Smaxr.Providers,
+  providers: [
+    %{
+      id: "openai",
+      label: "OpenAI / OpenCode",
+      module: Smaxr.LLM.OpenAI
+    },
+    %{
+      id: "anthropic",
+      label: "Anthropic / OpenModel",
+      module: Smaxr.LLM.Anthropic
+    }
+  ]
+
 # Import last so env overrides take precedence.
 import_config "#{config_env()}.exs"
