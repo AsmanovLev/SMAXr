@@ -17,7 +17,6 @@ defmodule Smaxr.Commands do
       "models" => &cmd_models/2,
       "provider" => &cmd_provider/2,
       "providers" => &cmd_providers/2,
-      "providers" => &cmd_providers/2,
       "system" => &cmd_system/2,
       "maxsteps" => &cmd_maxsteps/2,
       "tools" => &cmd_tools/2,
@@ -52,7 +51,14 @@ defmodule Smaxr.Commands do
   @doc "Execute a parsed command. Returns {:handled, text, state_updates} or :passthrough."
   def execute(cmd, args, _source, state) do
     handler = Map.get(commands_map(), cmd)
-    if handler, do: handler.(args, state), else: {:handled, "Unknown command: /#{cmd}", state}
+
+    result = if handler, do: handler.(args, state), else: {:handled, "Unknown command: /#{cmd}", state}
+
+    # Normalize {:ok, ...} to {:handled, ...}
+    case result do
+      {:ok, reply, new_state} -> {:handled, reply, new_state}
+      other -> other
+    end
   end
 
   # /start
@@ -257,7 +263,7 @@ defmodule Smaxr.Commands do
   def cmd_version(_, state) do
     sha = git_sha()
     model = state.model || "?"
-    provider = state.provider || "?"
+    provider = state.provider || Smaxr.Providers.current() || "?"
     {:handled, "SMAXr #{sha} (model: #{model}, provider: #{provider})", state}
   end
 
@@ -284,7 +290,7 @@ defmodule Smaxr.Commands do
   # Help text
   defp help_text(_state) do
     """
-    *SMAXr* — Self-Modifying Agent written in Elixir
+    **SMAXr** — Self-Modifying Agent written in Elixir
 
     /start — this message
     /help  — command list

@@ -66,10 +66,11 @@ defmodule Smaxr.LLM.Message do
       end)
     %{"role" => "user", "content" => blocks}
   end
-  def to_map(%__MODULE__{role: r, content: c, name: n, tool_calls: tc, tool_call_id: tci}) do
+  def to_map(%__MODULE__{role: r, content: c, name: n, tool_calls: tc, tool_call_id: tci, thinking: th}) do
     %{"role" => Atom.to_string(r), "content" => c || ""}
     |> then(fn m -> if n, do: Map.put(m, "name", n), else: m end)
     |> then(fn m -> if tc, do: Map.put(m, "tool_calls", tc), else: m end)
     |> then(fn m -> if tci, do: Map.put(m, "tool_call_id", tci), else: m end)
+    |> then(fn m -> if th && th != "", do: Map.put(m, "reasoning_content", th), else: m end)
   end
 end

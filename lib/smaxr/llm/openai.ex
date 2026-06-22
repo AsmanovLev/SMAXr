@@ -113,14 +113,18 @@ defmodule Smaxr.LLM.OpenAI do
 
     # Some models (deepseek-v4-flash, etc.) embed their thinking inside the
     # content as a <think>…</think> block. Strip it so the user only sees
-    # the actual answer.
+    # the actual answer. We also capture reasoning_content separately
+    # so we can echo it back on the next request — DeepSeek in thinking
+    # mode requires the original reasoning to be passed back.
     raw_content = choice["message"]["content"] || ""
     content = strip_thinking(raw_content)
+    reasoning = choice["message"]["reasoning_content"]
 
     msg = %Message{
       role: :assistant,
       content: content,
-      tool_calls: tool_calls
+      tool_calls: tool_calls,
+      thinking: reasoning
     }
     {:ok, msg, usage || %{}}
   end

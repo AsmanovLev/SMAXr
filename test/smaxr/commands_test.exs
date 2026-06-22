@@ -4,7 +4,15 @@ defmodule Smaxr.CommandsTest do
   alias Smaxr.Commands
 
   def agent_state(opts \\ []) do
-    %{user_id: 1, messages: [], message_count: 0, last_ref: nil, model: opts[:model] || "deepseek-v4-flash", max_steps: 200}
+    %{
+      user_id: 1,
+      messages: [],
+      message_count: 0,
+      last_ref: nil,
+      model: opts[:model] || "deepseek-v4-flash",
+      provider: opts[:provider] || "openai",
+      max_steps: 200
+    }
   end
 
   describe "parse/1" do
