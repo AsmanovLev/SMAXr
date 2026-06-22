@@ -30,3 +30,6 @@ smaxr-*.tar
 priv/smaxr/logs/
 priv/smaxr_test/logs/
 
+# MCP servers — contains node_modules, configs, and runtime data
+/mcp_servers/
+
