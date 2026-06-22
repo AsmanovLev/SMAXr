@@ -30,6 +30,9 @@ smaxr-*.tar
 priv/smaxr/logs/
 priv/smaxr_test/logs/
 
+# Test persistent stores
+priv/smaxr_test/store.dets
+
 # MCP servers — contains node_modules, configs, and runtime data
 /mcp_servers/
 
