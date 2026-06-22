@@ -24,7 +24,7 @@ defmodule Smaxr.MixProject do
 
   defp deps do
     [
-      {:konsolidator, git: "https://github.com/AsmanovLev/konsolidator.git", branch: "main"},
+      {:konsolidator, git: "https://github.com/AsmanovLev/konsolidator.git", branch: "win7-support"},
       {:req, "~> 0.5"},
       {:phoenix_pubsub, "~> 2.1"}
     ]
