@@ -22,6 +22,7 @@ defmodule Smaxr.MCP do
   """
 
   use GenServer
+  require Logger
 
   defstruct servers: []
 
@@ -131,11 +132,17 @@ defmodule Smaxr.MCP do
 
   defp start_server(state, cfg) do
     name = cfg.name
-    {:ok, _pid} = DynamicSupervisor.start_child(Smaxr.MCP.Supervisor, {
-      Smaxr.MCP.Server, {name, cfg.command, cfg.args || [], cfg.env || %{}, @ets_table}
-    })
 
-    %{state | servers: [name | state.servers]}
+    case DynamicSupervisor.start_child(Smaxr.MCP.Supervisor, {
+      Smaxr.MCP.Server, {name, cfg.command, cfg.args || [], cfg.env || %{}, @ets_table}
+    }) do
+      {:ok, _pid} ->
+        %{state | servers: [name | state.servers]}
+
+      {:error, reason} ->
+        Logger.warning("[MCP] failed to start server #{name}: #{inspect(reason)}")
+        state
+    end
   end
 
   defp stop_server(state, name) do
