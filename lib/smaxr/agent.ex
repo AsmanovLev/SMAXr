@@ -8,11 +8,14 @@ defmodule Smaxr.Agent do
   alias Smaxr.LLM.Message
 
   defstruct user_id: nil,
+            session_name: nil,
             messages: [],
             message_count: 0,
             last_ref: nil,
             model: nil,
             provider: nil,
+            workdir: nil,
+            dcp_state: nil,
             max_steps: 200,
             busy: false,
             cancel: false,
@@ -49,7 +52,7 @@ defmodule Smaxr.Agent do
   @impl true
   def init(user_id) do
     Registry.register(Smaxr.Registry, {:agent, user_id}, self())
-    state = %__MODULE__{user_id: user_id, model: default_model(), provider: Smaxr.Providers.current()}
+    state = restore_or_create(user_id)
     {:ok, state}
   end
 
@@ -77,6 +80,56 @@ defmodule Smaxr.Agent do
     _ -> :ok
   end
 
+  # ── Store persistence ────────────────────────────────────────────
+
+  defp restore_or_create(user_id) do
+    if Smaxr.Store.store_open?() do
+      with {:ok, name} <- Smaxr.Store.get_active(user_id),
+           {:ok, data} <- Smaxr.Store.get_session(user_id, name) do
+        data = Map.drop(data, [:updated_at])
+        struct(%__MODULE__{user_id: user_id, session_name: name}, data)
+      else
+        _ -> create_default(user_id)
+      end
+    else
+      create_default(user_id)
+    end
+  end
+
+  defp create_default(user_id) do
+    %__MODULE__{
+      user_id: user_id,
+      session_name: "default",
+      workdir: default_workdir(),
+      model: default_model(),
+      provider: Smaxr.Providers.current()
+    }
+  end
+
+  defp persist(state) do
+    if Smaxr.Store.store_open?() do
+      data = %{
+        session_name: state.session_name,
+        messages: state.messages,
+        message_count: state.message_count,
+        model: state.model,
+        provider: state.provider,
+        workdir: state.workdir,
+        max_steps: state.max_steps,
+        queue_mode: state.queue_mode,
+        dcp_state: state.dcp_state
+      }
+
+      Smaxr.Store.save_session(state.user_id, state.session_name, data)
+    end
+
+    state
+  end
+
+  defp default_workdir do
+    Application.get_env(:smaxr, :default_workdir, File.cwd!())
+  end
+
   @impl true
   def handle_cast({:incoming, _source, %{text: text} = payload}, state) when is_binary(text) do
     state = %{state | message_count: state.message_count + 1, last_ref: payload.ref}
@@ -85,18 +138,23 @@ defmodule Smaxr.Agent do
 
     case Smaxr.Commands.parse(text) do
       {:command, cmd, args} ->
-        send_input_marker(state, "/#{cmd} #{args}" |> String.trim())
-        {:handled, reply, new_state} = Smaxr.Commands.execute(cmd, args, :telegram, state)
-        Logger.info("[agent #{state.user_id}] command /#{cmd} handled")
+        if state.busy and not Smaxr.Commands.whitelisted?(cmd) do
+          reply_to_user(state, "⏳ Command /#{cmd} is not available until the current task finishes.", :text)
+          {:noreply, state}
+        else
+          send_input_marker(state, "/#{cmd} #{args}" |> String.trim())
+          {:handled, reply, new_state} = Smaxr.Commands.execute(cmd, args, :telegram, state)
+          Logger.info("[agent #{state.user_id}] command /#{cmd} handled")
 
-        chat_log(
-          new_state.user_id,
-          "command",
-          "/#{cmd} #{args} -> #{String.slice(reply, 0, 200)}"
-        )
+          chat_log(
+            new_state.user_id,
+            "command",
+            "/#{cmd} #{args} -> #{String.slice(reply, 0, 200)}"
+          )
 
-        reply_to_user(new_state, reply, :markdown)
-        {:noreply, new_state}
+          reply_to_user(new_state, reply, :markdown)
+          {:noreply, persist(new_state)}
+        end
 
       nil ->
         if state.busy do
@@ -135,10 +193,15 @@ defmodule Smaxr.Agent do
 
     case Smaxr.Commands.parse("/" <> data) do
       {:command, cmd, args} ->
-        send_input_marker(state, "/" <> data)
-        {:handled, reply, new_state} = Smaxr.Commands.execute(cmd, args, :telegram, state)
-        reply_to_user(new_state, reply, :markdown)
-        {:noreply, new_state}
+        if state.busy and not Smaxr.Commands.whitelisted?(cmd) do
+          reply_to_user(state, "⏳ Command /#{cmd} is not available until the current task finishes.", :text)
+          {:noreply, state}
+        else
+          send_input_marker(state, "/" <> data)
+          {:handled, reply, new_state} = Smaxr.Commands.execute(cmd, args, :telegram, state)
+          reply_to_user(new_state, reply, :markdown)
+          {:noreply, persist(new_state)}
+        end
 
       nil ->
         if state.busy do
@@ -190,7 +253,7 @@ defmodule Smaxr.Agent do
         chat_log(state.user_id, "cancelled", "steps=#{steps}")
         send_end_marker(state, steps)
         reply_to_user(state, "🛑 stopped.", :text)
-        {:noreply, cleanup_instant_inject(state)}
+        {:noreply, state |> cleanup_instant_inject() |> persist()}
 
       true ->
         state = cleanup_instant_inject(state)
@@ -203,7 +266,7 @@ defmodule Smaxr.Agent do
         # flag for the next check.
         case state.pending do
           [] ->
-            {:noreply, state}
+            {:noreply, persist(state)}
 
           pending ->
             Logger.info("[agent #{state.user_id}] auto-injecting #{length(pending)} queued")
@@ -229,7 +292,7 @@ defmodule Smaxr.Agent do
                 cleanup_instant_inject(state)
             end
 
-            {:noreply, state}
+            {:noreply, persist(state)}
         end
     end
   end
@@ -399,7 +462,12 @@ defmodule Smaxr.Agent do
         state = drain_instant_inject(state)
         typing_pid = start_typing_loop(state)
         Logger.info("[agent #{state.user_id}] LLM call (step #{step})")
-        result = call_llm(state, step)
+
+        {truncated, nudge, new_dcp_state} =
+          Smaxr.DCP.apply_strategies(state.messages, dcp_state: state.dcp_state)
+
+        state = %{state | dcp_state: new_dcp_state}
+        result = call_llm(state, step, truncated, nudge)
         stop_typing(typing_pid)
 
         case result do
@@ -550,13 +618,12 @@ defmodule Smaxr.Agent do
     end
   end
 
-  defp call_llm(state, _step) do
+  defp call_llm(state, _step, messages, nudge) do
     model = state.model || default_model()
     provider_id = state.provider || Smaxr.Providers.current()
     provider_mod = provider_module(provider_id)
     tools_specs = Smaxr.Tools.specs()
 
-    {messages, nudge} = Smaxr.DCP.apply_strategies(state.messages)
     history = build_history(messages, nudge)
 
     case provider_mod.call(model, history, tools: tools_specs) do
@@ -615,7 +682,7 @@ defmodule Smaxr.Agent do
 
         chat_log(state.user_id, "tool_call", "#{name}(#{inspect(args, limit: 100)})")
 
-        result = Smaxr.Tools.call(name, args)
+        result = Smaxr.Tools.call(name, Map.put(args, "_workdir", state.workdir))
 
         Logger.info(
           "[agent #{state.user_id}] tool #{name} result: #{inspect(result, limit: 200)}"

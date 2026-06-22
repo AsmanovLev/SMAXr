@@ -20,13 +20,15 @@ defmodule Smaxr.Tools.SendFile do
   end
 
   @impl true
-  def call(%{"path" => path}) do
-    case File.exists?(path) and not File.dir?(path) do
-      true ->
-        {:ok, "file ready at #{path} (size: #{File.stat!(path).size})"}
+  def call(%{"path" => path} = args) do
+    with {:ok, abs_path} <- Smaxr.Util.guard_path(path, args["_workdir"]) do
+      case File.exists?(abs_path) and not File.dir?(abs_path) do
+        true ->
+          {:ok, "file ready at #{abs_path} (size: #{File.stat!(abs_path).size})"}
 
-      false ->
-        {:error, "send_file: file not found or is a directory: #{path}"}
+        false ->
+          {:error, "send_file: file not found or is a directory: #{abs_path}"}
+      end
     end
   end
 

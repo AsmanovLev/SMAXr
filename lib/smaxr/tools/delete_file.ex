@@ -19,9 +19,11 @@ defmodule Smaxr.Tools.DeleteFile do
   end
 
   @impl true
-  def call(%{"path" => path}) do
-    File.rm_rf(path)
-    {:ok, "deleted #{path}"}
+  def call(%{"path" => path} = args) do
+    with {:ok, abs_path} <- Smaxr.Util.guard_path(path, args["_workdir"]) do
+      File.rm_rf(abs_path)
+      {:ok, "deleted #{abs_path}"}
+    end
   end
 
   def call(_), do: {:error, "missing 'path' argument"}

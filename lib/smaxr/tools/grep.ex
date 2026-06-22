@@ -23,15 +23,18 @@ defmodule Smaxr.Tools.Grep do
   @impl true
   def call(%{"pattern" => pattern} = args) do
     search_dir = Map.get(args, "path", ".")
-    cmd = "Get-ChildItem -Recurse -File #{search_dir} | Select-String -Pattern '#{pattern}' | Format-Table -AutoSize"
 
-    case Smaxr.Util.safe_cmd("powershell", ["-Command", cmd]) do
-      {:error, reason} ->
-        {:error, "grep: #{reason}"}
+    with {:ok, abs_dir} <- Smaxr.Util.guard_path(search_dir, args["_workdir"]) do
+      cmd = "Get-ChildItem -Recurse -File #{abs_dir} | Select-String -Pattern '#{pattern}' | Format-Table -AutoSize"
 
-      {output, _code} ->
-        output = String.trim(output)
-        if output == "", do: {:ok, "no matches"}, else: {:ok, output}
+      case Smaxr.Util.safe_cmd("powershell", ["-Command", cmd]) do
+        {:error, reason} ->
+          {:error, "grep: #{reason}"}
+
+        {output, _code} ->
+          output = String.trim(output)
+          if output == "", do: {:ok, "no matches"}, else: {:ok, output}
+      end
     end
   end
 

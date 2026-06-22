@@ -3,6 +3,30 @@ defmodule Smaxr.LLM.OpenAITest do
 
   alias Smaxr.LLM.{OpenAI, Message}
 
+  describe "m_id injection" do
+    test "injects dcp-message-id tag when message has m_id" do
+      msg = %Message{role: :user, content: "hello", m_id: 5}
+      [result] = OpenAI.messages_for_test([msg])
+      assert result["content"] =~ ~r/dcp-message-id>m5<\/dcp-message-id>/
+    end
+
+    test "does not inject tag when m_id is nil" do
+      msg = %Message{role: :user, content: "hello", m_id: nil}
+      [result] = OpenAI.messages_for_test([msg])
+      refute result["content"] =~ ~r/dcp-message-id>/
+    end
+
+    test "injects on tool_result messages using the message's m_id" do
+      msg = Message.tool_results([{"result_a", "call_1", "tool_a"}, {"result_b", "call_2", "tool_b"}])
+      msg = %{msg | m_id: 3}
+      results = OpenAI.messages_for_test([msg])
+      assert length(results) == 2
+      for r <- results do
+        assert r[:content] =~ ~r/dcp-message-id>m3<\/dcp-message-id>/
+      end
+    end
+  end
+
   describe "fixture parsing" do
     test "fixture parses correctly" do
       body = fixture()
@@ -25,9 +49,6 @@ defmodule Smaxr.LLM.OpenAITest do
 
   describe "models/0" do
     test "returns empty list when config is unset" do
-      # When no config is set, models() returns [] because curl can't reach
-      # the default URL (not available from this network). This is a safe
-      # fallback.
       models = OpenAI.models()
       assert is_list(models)
     end

@@ -21,22 +21,24 @@ defmodule Smaxr.Tools.EditFile do
   end
 
   @impl true
-  def call(%{"path" => path, "old" => old, "new" => new}) do
-    case File.read(path) do
-      {:ok, content} ->
-        if String.contains?(content, old) do
-          new_content = String.replace(content, old, new)
+  def call(%{"path" => path, "old" => old, "new" => new} = args) do
+    with {:ok, abs_path} <- Smaxr.Util.guard_path(path, args["_workdir"]) do
+      case File.read(abs_path) do
+        {:ok, content} ->
+          if String.contains?(content, old) do
+            new_content = String.replace(content, old, new)
 
-          case File.write(path, new_content) do
-            :ok -> {:ok, "edited #{path} (#{String.length(new)} chars replaced)"}
-            {:error, reason} -> {:error, "edit_file: write: #{reason}"}
+            case File.write(abs_path, new_content) do
+              :ok -> {:ok, "edited #{abs_path} (#{String.length(new)} chars replaced)"}
+              {:error, reason} -> {:error, "edit_file: write: #{reason}"}
+            end
+          else
+            {:error, "edit_file: old string not found in #{abs_path}"}
           end
-        else
-          {:error, "edit_file: old string not found in #{path}"}
-        end
 
-      {:error, reason} ->
-        {:error, "edit_file: read: #{reason}"}
+        {:error, reason} ->
+          {:error, "edit_file: read: #{reason}"}
+      end
     end
   end
 

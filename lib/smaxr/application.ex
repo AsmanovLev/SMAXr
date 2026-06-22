@@ -5,6 +5,8 @@ defmodule Smaxr.Application do
 
   @impl true
   def start(_type, _args) do
+    :ok = Smaxr.Store.open()
+
     children =
       [
         # Per-agent registry.

@@ -20,14 +20,14 @@ defmodule Smaxr.DCPDisabledTest do
   describe "apply_strategies/2 (DCP disabled — default)" do
     test "passes messages through unchanged" do
       history = msgs(50, :user) ++ [Message.assistant("final")]
-      {result, nudge} = DCP.apply_strategies(history)
+      {result, nudge, _state} = DCP.apply_strategies(history)
       assert result == history
       assert nudge == ""
     end
 
     test "does not compress or dedup or nudge, even with 100 messages" do
       history = msgs(100)
-      {result, nudge} = DCP.apply_strategies(history, compress_threshold: 20)
+      {result, nudge, _state} = DCP.apply_strategies(history, compress_threshold: 20)
       assert length(result) == 100
       assert nudge == ""
     end

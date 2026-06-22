@@ -31,7 +31,7 @@ defmodule Smaxr.LLM.Anthropic do
     headers = if api_key == "", do: List.delete_at(headers, 2), else: headers
     url = "#{base_url}/v1/messages"
 
-    case curl_post(url, headers, json_body) do
+    case Smaxr.LLM.Retry.with_backoff(fn -> curl_post(url, headers, json_body) end) do
       {:ok, result} -> parse_result(result)
       {:error, reason} -> {:error, reason}
     end

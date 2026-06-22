@@ -20,10 +20,13 @@ defmodule Smaxr.Tools.MoveFile do
   end
 
   @impl true
-  def call(%{"source" => src, "destination" => dst}) do
-    case File.rename(src, dst) do
-      :ok -> {:ok, "moved #{src} -> #{dst}"}
-      {:error, reason} -> {:error, "move_file: #{reason}"}
+  def call(%{"source" => src, "destination" => dst} = args) do
+    with {:ok, abs_src} <- Smaxr.Util.guard_path(src, args["_workdir"]),
+         {:ok, abs_dst} <- Smaxr.Util.guard_path(dst, args["_workdir"]) do
+      case File.rename(abs_src, abs_dst) do
+        :ok -> {:ok, "moved #{abs_src} -> #{abs_dst}"}
+        {:error, reason} -> {:error, "move_file: #{reason}"}
+      end
     end
   end
 

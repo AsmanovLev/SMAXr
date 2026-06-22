@@ -13,6 +13,8 @@ defmodule Smaxr.Commands do
       "rename" => &cmd_rename/2,
       "delete" => &cmd_delete/2,
       "sessions" => &cmd_sessions/2,
+      "clear" => &cmd_clear/2,
+      "workdir" => &cmd_workdir/2,
       "model" => &cmd_model/2,
       "models" => &cmd_models/2,
       "provider" => &cmd_provider/2,
@@ -26,9 +28,21 @@ defmodule Smaxr.Commands do
       "compress" => &cmd_compress/2,
       "stop" => &cmd_stop/2,
       "abort" => &cmd_abort/2,
-      "queue" => &cmd_queue/2
+      "queue" => &cmd_queue/2,
+      "gitsha" => &cmd_gitsha/2,
+      "gitlog" => &cmd_gitlog/2,
+      "gitdiff" => &cmd_gitdiff/2,
+      "status" => &cmd_status/2
     }
   end
+
+  @whitelist MapSet.new([
+    "help", "sessions", "dcp", "compress", "tools", "trace", "version",
+    "workdir", "model", "models", "provider", "providers", "system",
+    "maxsteps", "queue", "gitsha", "gitlog", "gitdiff", "status"
+  ])
+
+  def whitelisted?(cmd), do: MapSet.member?(@whitelist, cmd)
 
   @doc "Check if text starts with a '/command'. Returns {:command, args} or nil."
   def parse(text) when is_binary(text) do
@@ -72,34 +86,130 @@ defmodule Smaxr.Commands do
     {:handled, help_text(state), state}
   end
 
-  # /new — start new session (clear messages)
+  # /new — create a new named session
   def cmd_new(_, state) do
-    {:handled, "✨ New session started.", %{state | messages: [], message_count: 0}}
+    names = Smaxr.Store.list_sessions(state.user_id) |> Enum.map(& &1.name)
+    name = unique_name(names, "default")
+
+    Smaxr.Store.set_active(state.user_id, name)
+
+    new_state =
+      state
+      |> Map.put(:session_name, name)
+      |> Map.put(:messages, [])
+      |> Map.put(:message_count, 0)
+      |> Map.put(:dcp_state, nil)
+      |> Map.put(:workdir, default_workdir())
+
+    {:handled, "✨ New session: #{name}", new_state}
   end
 
-  # /switch — placeholder (needs store)
+  # /switch <name> — switch to existing session
   def cmd_switch(args, state) do
-    session_id = if args != "", do: args, else: "default"
-    {:handled, "session switched to #{session_id}", state}
+    name = if args != "", do: String.trim(args), else: "default"
+
+    case Smaxr.Store.get_session(state.user_id, name) do
+      {:ok, data} ->
+        Smaxr.Store.set_active(state.user_id, name)
+        data = Map.drop(data, [:updated_at, :session_name])
+        new_state = struct(state, data)
+        {:handled, "Switched to #{name}", Map.put(new_state, :session_name, name)}
+
+      {:error, _} ->
+        {:handled, "Session '#{name}' not found", state}
+    end
   end
 
-  # /rename — placeholder
+  # /rename [name] — rename current session
   def cmd_rename(args, state) do
-    name = if args != "", do: args, else: DateTime.utc_now() |> DateTime.to_string()
-    {:handled, "session renamed to #{name}", state}
+    name = String.trim(args)
+
+    name =
+      if name == "" do
+        "session-#{:erlang.unique_integer([:positive])}"
+      else
+        name
+      end
+
+    names = Smaxr.Store.list_sessions(state.user_id) |> Enum.map(& &1.name)
+
+    if name in names do
+      {:handled, "Session '#{name}' already exists", state}
+    else
+      Smaxr.Store.delete_session(state.user_id, state.session_name)
+      Smaxr.Store.set_active(state.user_id, name)
+      {:handled, "Renamed to #{name}", Map.put(state, :session_name, name)}
+    end
   end
 
-  # /delete — placeholder
-  def cmd_delete(_, state) do
-    {:handled, "current session deleted. Starting fresh.", %{state | messages: [], message_count: 0}}
+  # /delete [name] — delete a session
+  def cmd_delete(args, state) do
+    name = if args != "", do: String.trim(args), else: state.session_name
+    list = Smaxr.Store.list_sessions(state.user_id)
+
+    if length(list) <= 1 do
+      {:handled, "Cannot delete the only session", state}
+    else
+      Smaxr.Store.delete_session(state.user_id, name)
+
+      if name == state.session_name do
+        remaining = Enum.reject(list, &(&1.name == name))
+        latest = Enum.max_by(remaining, & &1.updated_at)
+        Smaxr.Store.set_active(state.user_id, latest.name)
+        {:ok, data} = Smaxr.Store.get_session(state.user_id, latest.name)
+        data = Map.drop(data, [:updated_at, :session_name])
+        new_state = struct(state, data)
+        {:handled, "Deleted '#{name}', switched to '#{latest.name}'",
+         Map.put(new_state, :session_name, latest.name)}
+      else
+        {:handled, "Deleted '#{name}'", state}
+      end
+    end
   end
 
-  # /sessions — list
+  # /sessions — list sessions
   def cmd_sessions(_, state) do
-    count = state.message_count
-    model = state.model || Smaxr.Models.current()
-    provider = state.provider || Smaxr.Providers.current()
-    {:handled, "Active session.\nmessages: #{count}\nmodel: #{model}\nprovider: #{provider}\n", state}
+    list = Smaxr.Store.list_sessions(state.user_id)
+
+    if list == [] do
+      count = state.message_count || length(state.messages)
+      model = state.model || Smaxr.Models.current()
+      provider = state.provider || Smaxr.Providers.current()
+      {:handled, "Active session.\nmessages: #{count}\nmodel: #{model}\nprovider: #{provider}\n", state}
+    else
+      current = state.session_name
+      rows =
+        Enum.map(list, fn s ->
+          marker = if s.name == current, do: "★", else: " "
+          "#{marker}  #{s.name}  (#{s.message_count} msgs)"
+        end)
+
+      {:handled, "Sessions:\n#{Enum.join(rows, "\n")}", state}
+    end
+  end
+
+  # /clear — wipe messages in current session
+  def cmd_clear(_, state) do
+    {:handled, "🗑 Session cleared.",
+     state |> Map.put(:messages, []) |> Map.put(:message_count, 0) |> Map.put(:dcp_state, nil)}
+  end
+
+  # /workdir [path] — show or set working directory
+  def cmd_workdir(args, state) do
+    case String.trim(args) do
+      "" ->
+        wd = state.workdir || default_workdir()
+        {:handled, "workdir: #{wd}", state}
+
+      path ->
+        abs_path = Path.absname(path)
+
+        if File.dir?(abs_path) do
+          {:handled, "workdir set to #{abs_path}", Map.put(state, :workdir, abs_path)}
+        else
+          {:handled, "directory does not exist: #{abs_path}", state}
+        end
+    end
   end
 
   # /model — show or set (with validation against Smaxr.Models)
@@ -318,6 +428,48 @@ defmodule Smaxr.Commands do
   # /queue — show queue status or set mode (instant | deferred)
   def cmd_queue(args, state), do: Smaxr.Agent.do_queue(state, args)
 
+  # /gitsha — show current git SHA
+  def cmd_gitsha(_, state) do
+    workdir = state.workdir || default_workdir()
+    case Smaxr.Util.safe_cmd("git", ["rev-parse", "--short", "HEAD"], cd: workdir) do
+      {sha, 0} -> {:handled, "git: #{String.trim(sha)}", state}
+      _ -> {:handled, "git: not a git repository", state}
+    end
+  end
+
+  # /gitlog [N] — show last N commits
+  def cmd_gitlog(args, state) do
+    n = if args != "", do: String.to_integer(args), else: 10
+    workdir = state.workdir || default_workdir()
+    case Smaxr.Util.safe_cmd("git", ["log", "--oneline", "-n", Integer.to_string(n)], cd: workdir) do
+      {out, 0} -> {:handled, String.trim(out), state}
+      _ -> {:handled, "git: log failed", state}
+    end
+  end
+
+  # /gitdiff [path] — show working-tree diff
+  def cmd_gitdiff(args, state) do
+    workdir = state.workdir || default_workdir()
+    path = String.trim(args)
+    argv = if path == "", do: ["diff"], else: ["diff", "--", path]
+    case Smaxr.Util.safe_cmd("git", argv, cd: workdir) do
+      {out, 0} -> {:handled, if(out == "", do: "(no diff)", else: String.trim(out)), state}
+      _ -> {:handled, "git: diff failed", state}
+    end
+  end
+
+  # /status — show working tree status
+  def cmd_status(_, state) do
+    workdir = state.workdir || default_workdir()
+    case Smaxr.Util.safe_cmd("git", ["status", "--porcelain"], cd: workdir) do
+      {out, 0} ->
+        report = if String.trim(out) == "", do: "clean", else: String.trim(out)
+        {:handled, report, state}
+      _ ->
+        {:handled, "git: status failed", state}
+    end
+  end
+
   # Help text
   defp help_text(_state) do
     """
@@ -330,6 +482,8 @@ defmodule Smaxr.Commands do
     /rename <name> — rename session
     /delete — delete current session
     /sessions — list sessions
+    /clear — clear current session history
+    /workdir [path] — show/set working directory
     /model [name] — show/set model (e.g. `/model 4`, `/model kimi`, `/model glm-5.2`)
     /models [filter|refresh] — list available models
     /provider [name] — show/set provider (e.g. `/provider anthropic`, `/provider 2`)
@@ -345,6 +499,18 @@ defmodule Smaxr.Commands do
     /abort — abort processing
     /queue — show messages waiting in the queue
     """
+  end
+
+  defp unique_name(names, base, n \\ 1)
+
+  defp unique_name(names, base, n) do
+    name = if n == 1, do: base, else: "#{base}-#{n}"
+
+    if name in names, do: unique_name(names, base, n + 1), else: name
+  end
+
+  defp default_workdir do
+    Application.get_env(:smaxr, :default_workdir, File.cwd!())
   end
 
   defp get_system_prompt do

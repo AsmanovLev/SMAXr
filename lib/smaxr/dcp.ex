@@ -43,20 +43,31 @@ defmodule Smaxr.DCP do
 
   @doc """
   Apply DCP strategies to a message history. Returns
-  `{new_history, nudge_text}`.
+  `{new_history, nudge_text, new_state}`.
+
+  Optional opts:
+    - `:dcp_state` — previous DCP state (default: fresh state)
+    - `:token_budget`, `:digest_keep_turns`, etc.
 
   When DCP is disabled (the default), the messages are returned
-  unchanged and `nudge_text` is empty.
+  unchanged, `nudge_text` is empty, `new_state` is the input state.
   """
   def apply_strategies(messages, opts \\ []) do
+    dcp_state = Keyword.get(opts, :dcp_state, default_state())
+    opts = Keyword.delete(opts, :dcp_state)
+
     if dcp_enabled?() do
-      do_apply(messages, opts)
+      do_apply(messages, dcp_state, opts)
     else
-      {messages, ""}
+      {messages, "", dcp_state}
     end
   end
 
-  defp do_apply(messages, opts) do
+  def default_state do
+    %{tombstoned_ids: MapSet.new(), seen_tool_names: %{}}
+  end
+
+  defp do_apply(messages, state, opts) do
     budget = Keyword.get(opts, :token_budget, get_config(:token_budget, @default_token_budget))
     keep_turns = Keyword.get(opts, :digest_keep_turns, get_config(:digest_keep_turns, @default_digest_keep_turns))
     max_chars = Keyword.get(opts, :tool_result_max_chars, get_config(:tool_result_max_chars, @default_tool_result_max_chars))
@@ -66,7 +77,7 @@ defmodule Smaxr.DCP do
     kept = messages
 
     kept = truncate_long_tool_results(kept, max_chars)
-    kept = tombstone_retry_loops(kept, retry_n)
+    {kept, state} = tombstone_retry_loops(kept, state, retry_n)
 
     {kept, _nudge} =
       if total > budget do
@@ -75,7 +86,7 @@ defmodule Smaxr.DCP do
         {kept, nudge_for(total, budget)}
       end
 
-    {kept, nudge_for(estimate_tokens(kept), budget)}
+    {kept, nudge_for(estimate_tokens(kept), budget), state}
   end
 
   # ── Token estimation ────────────────────────────────────────────
@@ -265,12 +276,17 @@ defmodule Smaxr.DCP do
   # loop. Replace each failure's content with a tombstone so the model
   # doesn't keep trying, but the tool_use/tool_result pair stays
   # intact (Anthropic requires it).
-  defp tombstone_retry_loops(messages, threshold) do
+  defp tombstone_retry_loops(messages, state, threshold) do
     runs = detect_failure_runs(messages, threshold)
+    new_runs = MapSet.difference(runs, state.tombstoned_ids)
+    combined = MapSet.union(state.tombstoned_ids, new_runs)
+    {apply_tombstones(messages, new_runs, threshold), %{state | tombstoned_ids: combined}}
+  end
 
+  defp apply_tombstones(messages, target_ids, threshold) do
     Enum.map(messages, fn
       %Message{role: :tool, content: c} = m when is_binary(c) and c != "" ->
-        if MapSet.member?(runs, m.tool_call_id) do
+        if MapSet.member?(target_ids, m.tool_call_id) do
           %{m | content: "[tombstoned by DCP — #{threshold} consecutive failures]"}
         else
           m
@@ -279,7 +295,7 @@ defmodule Smaxr.DCP do
       %Message{role: :tool, tool_results: trs} = m when is_list(trs) ->
         new_results =
           Enum.map(trs, fn {_c, id, name} = triple ->
-            if MapSet.member?(runs, id) do
+            if MapSet.member?(target_ids, id) do
               {"[tombstoned by DCP — #{threshold} consecutive failures]", id, name}
             else
               triple

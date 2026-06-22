@@ -30,7 +30,7 @@ defmodule Smaxr.DCPTest do
   describe "apply_strategies/2 (DCP enabled, under budget)" do
     test "small history passes through unchanged" do
       history = msgs(5)
-      {result, nudge} = DCP.apply_strategies(history, token_budget: 100_000)
+      {result, nudge, _state} = DCP.apply_strategies(history, token_budget: 100_000)
       assert length(result) == 5
       assert nudge == ""
     end
@@ -39,7 +39,7 @@ defmodule Smaxr.DCPTest do
   describe "apply_strategies/2 (DCP enabled, over budget)" do
     test "compresses oldest turns into a digest" do
       history = build_long_history(turn_count: 30, msgs_per_turn: 2, content: String.duplicate("alpha ", 20))
-      {result, _nudge} = DCP.apply_strategies(history, token_budget: 500)
+      {result, _nudge, _state} = DCP.apply_strategies(history, token_budget: 500)
 
       # 1 digest + keep_turns=10 turns × 2 msgs/turn = 1 + 20 = 21
       assert length(result) == 1 + 10 * 2
@@ -59,7 +59,7 @@ defmodule Smaxr.DCPTest do
           Message.user("goodbye")
         ] ++ Enum.map(1..20, fn i -> Message.user(String.duplicate("hi ", 30) <> "#{i}") end)
 
-      {result, _} = DCP.apply_strategies(tool_msgs, token_budget: 100)
+      {result, _, _state} = DCP.apply_strategies(tool_msgs, token_budget: 100)
       digest = hd(result)
       assert digest.role == :system
       assert digest.content =~ "find_files"
@@ -84,7 +84,7 @@ defmodule Smaxr.DCPTest do
         end
         |> List.flatten()
 
-      {result, _} = DCP.apply_strategies(history, token_budget: 200)
+      {result, _, _state} = DCP.apply_strategies(history, token_budget: 200)
 
       # Find the first non-system message; if it's a tool, we've broken
       # a cycle.
@@ -112,7 +112,7 @@ defmodule Smaxr.DCPTest do
         Message.tool_results([{long, "c1", "read_file"}])
       ] ++ msgs(2)
 
-      {result, _} = DCP.apply_strategies(history, token_budget: 10, tool_result_max_chars: 500)
+      {result, _, _state} = DCP.apply_strategies(history, token_budget: 10, tool_result_max_chars: 500)
 
       # Find the tool message and verify truncation
       tool_msg = Enum.find(result, &match?(%Message{role: :tool}, &1))
@@ -136,7 +136,7 @@ defmodule Smaxr.DCPTest do
         Message.tool_results([{fail, "c3", "read_file"}])
       ]
 
-      {result, _} = DCP.apply_strategies(history, token_budget: 10, retry_threshold: 3)
+      {result, _, _state} = DCP.apply_strategies(history, token_budget: 10, retry_threshold: 3)
 
       # All three tool_results should be tombstoned
       tool_results =
@@ -160,7 +160,7 @@ defmodule Smaxr.DCPTest do
         Message.tool_results([{fail, "c2", "read_file"}])
       ]
 
-      {result, _} = DCP.apply_strategies(history, token_budget: 10, retry_threshold: 3)
+      {result, _, _state} = DCP.apply_strategies(history, token_budget: 10, retry_threshold: 3)
 
       tool_results =
         result
@@ -178,7 +178,7 @@ defmodule Smaxr.DCPTest do
   describe "nudge_for" do
     test "nudge appears at >=50% budget" do
       history = msgs(50, :user, String.duplicate("x", 4000))
-      {_, nudge} = DCP.apply_strategies(history, token_budget: 1000)
+      {_, nudge, _state} = DCP.apply_strategies(history, token_budget: 1000)
       assert nudge =~ "Context:"
     end
   end

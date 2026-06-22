@@ -49,7 +49,7 @@ defmodule Smaxr.LLMTest do
         ]
 
     # Show what the Anthropic adapter would serialize
-    {dcp_msgs, _} = Smaxr.DCP.apply_strategies(history)
+    {dcp_msgs, _, _state} = Smaxr.DCP.apply_strategies(history)
 
     IO.puts("\n=== History (after DCP) ===")
     Enum.each(dcp_msgs, fn m ->

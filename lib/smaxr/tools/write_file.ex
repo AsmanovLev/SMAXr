@@ -25,17 +25,19 @@ defmodule Smaxr.Tools.WriteFile do
     content = args["content"] || args[:content]
 
     if is_binary(path) and is_binary(content) do
-      dir = Path.dirname(path)
+      with {:ok, abs_path} <- Smaxr.Util.guard_path(path, args["_workdir"]) do
+        dir = Path.dirname(abs_path)
 
-      case File.mkdir_p(dir) do
-        :ok ->
-          case File.write(path, content) do
-            :ok -> {:ok, "written to #{path}"}
-            {:error, reason} -> {:error, "write_file: #{reason}"}
-          end
+        case File.mkdir_p(dir) do
+          :ok ->
+            case File.write(abs_path, content) do
+              :ok -> {:ok, "written to #{abs_path}"}
+              {:error, reason} -> {:error, "write_file: #{reason}"}
+            end
 
-        {:error, reason} ->
-          {:error, "write_file: mkdir_p: #{reason}"}
+          {:error, reason} ->
+            {:error, "write_file: mkdir_p: #{reason}"}
+        end
       end
     else
       {:error, "missing 'path' or 'content'"}

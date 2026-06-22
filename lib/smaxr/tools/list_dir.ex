@@ -19,22 +19,24 @@ defmodule Smaxr.Tools.ListDir do
   end
 
   @impl true
-  def call(%{"path" => path}) do
-    case File.ls(path) do
-      {:ok, entries} ->
-        summary =
-          entries
-          |> Enum.map(fn name ->
-            full = Path.join(path, name)
-            type = if File.dir?(full), do: "dir", else: "file"
-            "#{name} (#{type})"
-          end)
-          |> Enum.join("\n")
+  def call(%{"path" => path} = args) do
+    with {:ok, abs_path} <- Smaxr.Util.guard_path(path, args["_workdir"]) do
+      case File.ls(abs_path) do
+        {:ok, entries} ->
+          summary =
+            entries
+            |> Enum.map(fn name ->
+              full = Path.join(abs_path, name)
+              type = if File.dir?(full), do: "dir", else: "file"
+              "#{name} (#{type})"
+            end)
+            |> Enum.join("\n")
 
-        {:ok, summary}
+          {:ok, summary}
 
-      {:error, reason} ->
-        {:error, "list_dir: #{reason}"}
+        {:error, reason} ->
+          {:error, "list_dir: #{reason}"}
+      end
     end
   end
 

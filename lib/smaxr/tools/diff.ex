@@ -20,19 +20,22 @@ defmodule Smaxr.Tools.Diff do
   end
 
   @impl true
-  def call(%{"file_a" => a, "file_b" => b}) do
-    case Smaxr.Util.safe_cmd("powershell", ["-Command", "diff (Get-Content #{a}) (Get-Content #{b})"]) do
-      {:error, reason} ->
-        {:error, "diff: #{reason}"}
+  def call(%{"file_a" => a, "file_b" => b} = args) do
+    with {:ok, abs_a} <- Smaxr.Util.guard_path(a, args["_workdir"]),
+         {:ok, abs_b} <- Smaxr.Util.guard_path(b, args["_workdir"]) do
+      case Smaxr.Util.safe_cmd("powershell", ["-Command", "diff (Get-Content #{abs_a}) (Get-Content #{abs_b})"]) do
+        {:error, reason} ->
+          {:error, "diff: #{reason}"}
 
-      {output, _code} ->
-        output = String.trim(output)
+        {output, _code} ->
+          output = String.trim(output)
 
-        if output == "" do
-          {:ok, "files are identical"}
-        else
-          {:ok, output}
-        end
+          if output == "" do
+            {:ok, "files are identical"}
+          else
+            {:ok, output}
+          end
+      end
     end
   end
 

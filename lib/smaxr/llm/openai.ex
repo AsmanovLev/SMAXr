@@ -150,6 +150,15 @@ defmodule Smaxr.LLM.OpenAI do
   """
   def parse_result_for_test(body), do: parse_result(body)
 
+  @doc """
+  Test-only entry point: build the OpenAI-format message list from a
+  list of `Message` structs. Used by OpenAITest to verify m_id injection
+  and message serialization.
+  """
+  def messages_for_test(messages) do
+    Enum.flat_map(messages, &to_message_map/1)
+  end
+
   @spec models() :: [String.t()]
   def models do
     base_url = get_config(:base_url, @default_base_url)
@@ -171,8 +180,11 @@ defmodule Smaxr.LLM.OpenAI do
 
   # HTTP via curl. Req was unreliable with some providers (MLX server
   # returning 401 via Req, works fine with curl). We use curl for all
-  # requests by default now.
-  defp do_post(url, headers, body, _proxy), do: curl_post(url, headers, body)
+  # requests by default now. All curl HTTP calls are wrapped in retry
+  # with exponential backoff.
+  defp do_post(url, headers, body, _proxy) do
+    Smaxr.LLM.Retry.with_backoff(fn -> curl_post(url, headers, body) end)
+  end
 
   defp do_get(url, headers, _proxy), do: curl_get(url, headers)
 

@@ -22,16 +22,19 @@ defmodule Smaxr.Tools.FindFiles do
   @impl true
   def call(%{"pattern" => pattern} = args) do
     search_dir = Map.get(args, "path", ".")
-    pattern_ps = pattern |> String.replace("*", "`*")
-    cmd = "Get-ChildItem -Path #{search_dir} -Recurse -Filter #{pattern_ps} | Select-Object -ExpandProperty FullName"
 
-    case Smaxr.Util.safe_cmd("powershell", ["-Command", cmd]) do
-      {:error, reason} ->
-        {:error, "find_files: #{reason}"}
+    with {:ok, abs_dir} <- Smaxr.Util.guard_path(search_dir, args["_workdir"]) do
+      pattern_ps = pattern |> String.replace("*", "`*")
+      cmd = "Get-ChildItem -Path #{abs_dir} -Recurse -Filter #{pattern_ps} | Select-Object -ExpandProperty FullName"
 
-      {output, _code} ->
-        output = String.trim(output)
-        if output == "", do: {:ok, "no files found"}, else: {:ok, output}
+      case Smaxr.Util.safe_cmd("powershell", ["-Command", cmd]) do
+        {:error, reason} ->
+          {:error, "find_files: #{reason}"}
+
+        {output, _code} ->
+          output = String.trim(output)
+          if output == "", do: {:ok, "no files found"}, else: {:ok, output}
+      end
     end
   end
 

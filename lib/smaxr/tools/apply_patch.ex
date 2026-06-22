@@ -22,24 +22,23 @@ defmodule Smaxr.Tools.ApplyPatch do
   end
 
   @impl true
-  def call(%{"path" => path}) do
-    abs_path = resolve(path)
+  def call(%{"path" => path} = args) do
+    with {:ok, abs_path} <- Smaxr.Util.guard_path(path, args["_workdir"]) do
+      abs_path = resolve(abs_path)
 
-    cond do
-      not File.exists?(abs_path) ->
-        {:error, "file not found: #{abs_path}"}
+      cond do
+        not File.exists?(abs_path) ->
+          {:error, "file not found: #{abs_path}"}
 
-      not String.ends_with?(abs_path, ".ex") ->
-        {:error, "apply_patch only reloads .ex files, got: #{abs_path}"}
+        not String.ends_with?(abs_path, ".ex") ->
+          {:error, "apply_patch only reloads .ex files, got: #{abs_path}"}
 
-      true ->
-        reload(abs_path)
+        true ->
+          reload(abs_path)
+      end
     end
   end
 
-  def call(_), do: {:error, "apply_patch: missing 'path' argument"}
-
-  # Resolve to absolute path, anchored at the project root.
   defp resolve(path) do
     cond do
       Path.type(path) == :absolute -> path

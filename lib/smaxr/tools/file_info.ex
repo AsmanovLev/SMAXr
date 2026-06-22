@@ -19,20 +19,22 @@ defmodule Smaxr.Tools.FileInfo do
   end
 
   @impl true
-  def call(%{"path" => path}) do
-    case File.stat(path) do
-      {:ok, stat} ->
-        info = """
-        path: #{path}
-        size: #{stat.size}
-        type: #{if File.dir?(path), do: "dir", else: "file"}
-        modified: #{format_time(stat.mtime)}
-        """
+  def call(%{"path" => path} = args) do
+    with {:ok, abs_path} <- Smaxr.Util.guard_path(path, args["_workdir"]) do
+      case File.stat(abs_path) do
+        {:ok, stat} ->
+          info = """
+          path: #{abs_path}
+          size: #{stat.size}
+          type: #{if File.dir?(abs_path), do: "dir", else: "file"}
+          modified: #{format_time(stat.mtime)}
+          """
 
-        {:ok, info}
+          {:ok, info}
 
-      {:error, reason} ->
-        {:error, "file_info: #{reason}"}
+        {:error, reason} ->
+          {:error, "file_info: #{reason}"}
+      end
     end
   end
 

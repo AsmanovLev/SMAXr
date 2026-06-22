@@ -35,7 +35,8 @@ defmodule Smaxr.Tools.ReadFile do
     limit = args["limit"] || args[:limit]
 
     if is_binary(path) do
-      with {:ok, content} <- File.read(path) do
+      with {:ok, abs_path} <- Smaxr.Util.guard_path(path, args["_workdir"]),
+           {:ok, content} <- File.read(abs_path) do
         {:ok, slice(content, offset, limit)}
       else
         {:error, reason} -> {:error, "read_file: #{reason}"}

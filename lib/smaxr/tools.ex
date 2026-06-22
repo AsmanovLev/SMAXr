@@ -20,10 +20,10 @@ defmodule Smaxr.Tools do
     Smaxr.Tools.SendFile,
     Smaxr.Tools.Eval,
     Smaxr.Tools.ApplyPatch,
-    Smaxr.Tools.Commit,
     Smaxr.Tools.Compress,
     Smaxr.Tools.MCPControl,
-    Smaxr.Tools.MCPCall
+    Smaxr.Tools.MCPCall,
+    Smaxr.Tools.Git
   ]
 
   @doc "List all tool specs in OpenAI function-calling format."
