@@ -278,8 +278,8 @@ defmodule Smaxr.Commands do
   # /abort — same as /stop
   def cmd_abort(_, state), do: Smaxr.Agent.do_stop(state)
 
-  # /queue — show messages waiting to be injected on the next turn
-  def cmd_queue(_, state), do: Smaxr.Agent.do_queue(state)
+  # /queue — show queue status or set mode (instant | deferred)
+  def cmd_queue(args, state), do: Smaxr.Agent.do_queue(state, args)
 
   # Help text
   defp help_text(_state) do

@@ -16,7 +16,8 @@ defmodule Smaxr.Agent do
             max_steps: 200,
             busy: false,
             cancel: false,
-            pending: []
+            pending: [],
+            queue_mode: :deferred
 
   def child_spec(arg) do
     %{
@@ -99,12 +100,24 @@ defmodule Smaxr.Agent do
 
       nil ->
         if state.busy do
-          new_state = enqueue_pending(state, text)
-          n = length(new_state.pending)
-          Logger.info("[agent #{state.user_id}] queued (now #{n})")
-          chat_log(state.user_id, "queued", "n=#{n} text=#{String.slice(text, 0, 80)}")
-          reply_to_user(new_state, "⏸ queued (#{n} pending) — will be sent on next turn", :text)
-          {:noreply, new_state}
+          case state.queue_mode do
+            :instant ->
+              # Write to persistent_term — the running LLM loop picks it up
+              existing = :persistent_term.get({__MODULE__, :inject, state.user_id}, [])
+              :persistent_term.put({__MODULE__, :inject, state.user_id}, existing ++ [text])
+              Logger.info("[agent #{state.user_id}] instant-injected: #{String.slice(text, 0, 80)}")
+              chat_log(state.user_id, "instant_inject", text)
+              reply_to_user(state, "⚡ injected (instant)", :text)
+              {:noreply, state}
+
+            _ ->
+              new_state = enqueue_pending(state, text)
+              n = length(new_state.pending)
+              Logger.info("[agent #{state.user_id}] queued (now #{n})")
+              chat_log(state.user_id, "queued", "n=#{n} text=#{String.slice(text, 0, 80)}")
+              reply_to_user(new_state, "⏸ queued (#{n} pending) — will be sent on next turn", :text)
+              {:noreply, new_state}
+          end
         else
           # Inject any messages that were queued before this one, then
           # start a new turn with the combined context.
@@ -129,10 +142,19 @@ defmodule Smaxr.Agent do
 
       nil ->
         if state.busy do
-          new_state = enqueue_pending(state, "[button] #{data}")
-          n = length(new_state.pending)
-          reply_to_user(new_state, "⏸ queued (#{n} pending)", :text)
-          {:noreply, new_state}
+          case state.queue_mode do
+            :instant ->
+              existing = :persistent_term.get({__MODULE__, :inject, state.user_id}, [])
+              :persistent_term.put({__MODULE__, :inject, state.user_id}, existing ++ ["[button] #{data}"])
+              reply_to_user(state, "⚡ injected (instant)", :text)
+              {:noreply, state}
+
+            _ ->
+              new_state = enqueue_pending(state, "[button] #{data}")
+              n = length(new_state.pending)
+              reply_to_user(new_state, "⏸ queued (#{n} pending)", :text)
+              {:noreply, new_state}
+          end
         else
           state = drain_pending_into_context(state)
           send_input_marker(state, "[button] " <> data)
@@ -168,9 +190,10 @@ defmodule Smaxr.Agent do
         chat_log(state.user_id, "cancelled", "steps=#{steps}")
         send_end_marker(state, steps)
         reply_to_user(state, "🛑 stopped.", :text)
-        {:noreply, state}
+        {:noreply, cleanup_instant_inject(state)}
 
       true ->
+        state = cleanup_instant_inject(state)
         {state, steps} = enforce_response(state, steps, 0, sent)
         send_end_marker(state, steps)
         # If a message arrived during the turn, it was queued. Now
@@ -188,9 +211,24 @@ defmodule Smaxr.Agent do
             joined = format_pending(pending)
             state = %{state | pending: []}
             state = push(state, Message.user(joined))
-            {state, steps, sent} = run_llm_loop(state, 0, 0)
-            {state, steps} = enforce_response(state, steps, 0, sent)
-            send_end_marker(state, steps)
+
+            try do
+              {state, steps, sent} = run_llm_loop(state, 0, 0)
+              {state, steps} = enforce_response(state, steps, 0, sent)
+              send_end_marker(state, steps)
+            rescue
+              e ->
+                stack = Exception.format_stacktrace(__STACKTRACE__)
+                Logger.error("[agent #{state.user_id}] Auto-inject LLM crashed: #{inspect(e)}\n#{stack}")
+                reply_to_user(state, "💥 <i>auto-inject failed — try again</i>", :html)
+                cleanup_instant_inject(state)
+            catch
+              kind, reason ->
+                Logger.error("[agent #{state.user_id}] Auto-inject exited: #{inspect(kind)} #{inspect(reason)}")
+                reply_to_user(state, "💥 <i>auto-inject failed — try again</i>", :html)
+                cleanup_instant_inject(state)
+            end
+
             {:noreply, state}
         end
     end
@@ -213,14 +251,29 @@ defmodule Smaxr.Agent do
     initial_state = state
 
     Task.Supervisor.start_child(Smaxr.EvalSupervisor, fn ->
-      s =
-        case kind do
-          :text -> push(initial_state, Message.user(text))
-          :button -> push_button(initial_state, text)
-        end
+      try do
+        s =
+          case kind do
+            :text -> push(initial_state, Message.user(text))
+            :button -> push_button(initial_state, text)
+          end
 
-      {s, steps, sent} = run_llm_loop(s, 0, 0)
-      send(parent, {:turn_done, s, steps, sent})
+        {s, steps, sent} = run_llm_loop(s, 0, 0)
+        send(parent, {:turn_done, s, steps, sent})
+      rescue
+        e ->
+          stack = Exception.format_stacktrace(__STACKTRACE__)
+          Logger.error("[agent #{initial_state.user_id}] Task crashed: #{inspect(e)}\n#{stack}")
+          cleanup_instant_inject(initial_state)
+          reply_to_user(initial_state, "💥 <i>internal error — agent recovered</i>", :html)
+          send(parent, {:turn_done, initial_state, 0, false})
+      catch
+        kind, reason ->
+          Logger.error("[agent #{initial_state.user_id}] Task exited: #{inspect(kind)} #{inspect(reason)}")
+          cleanup_instant_inject(initial_state)
+          reply_to_user(initial_state, "💥 <i>internal error — agent recovered</i>", :html)
+          send(parent, {:turn_done, initial_state, 0, false})
+      end
     end)
 
     %{state | busy: true}
@@ -264,6 +317,29 @@ defmodule Smaxr.Agent do
     :persistent_term.put({__MODULE__, :cancel, user_id}, false)
   end
 
+  # Drain messages that were written into persistent_term by instant-inject.
+  # Called at the top of each run_llm_loop iteration. After the loop ends
+  # any remaining are cleaned up so they don't carry across turns.
+  defp drain_instant_inject(state) do
+    case :persistent_term.get({__MODULE__, :inject, state.user_id}, []) do
+      [] ->
+        state
+
+      texts ->
+        :persistent_term.erase({__MODULE__, :inject, state.user_id})
+        joined = Enum.join(texts, "\n")
+        Logger.info("[agent #{state.user_id}] draining #{length(texts)} instant-injected messages")
+        chat_log(state.user_id, "drain_instant", "n=#{length(texts)}")
+        push(state, Message.user(joined))
+    end
+  end
+
+  # Clean up any leftover instant-inject state after a turn completes
+  defp cleanup_instant_inject(state) do
+    :persistent_term.erase({__MODULE__, :inject, state.user_id})
+    state
+  end
+
   # ── /stop, /abort, /queue ─────────────────────────────────────────
 
   # /stop and /abort set the cancel flag. run_llm_loop checks it
@@ -279,22 +355,29 @@ defmodule Smaxr.Agent do
     end
   end
 
-  def do_queue(state) do
-    case state.pending do
-      [] ->
-        {:ok, "queue is empty.", state}
+  def do_queue(state, args \\ "") do
+    case String.trim(args) do
+      "instant" ->
+        {:handled, "⚡ queue mode set to **instant** — messages will inject mid-turn", %{state | queue_mode: :instant}}
 
-      pending ->
-        preview =
-          pending
-          |> Enum.take(5)
-          |> Enum.map(fn {text, _ts} -> "• #{String.slice(text, 0, 80)}" end)
-          |> Enum.join("\n")
+      "deferred" ->
+        {:handled, "⏸ queue mode set to **deferred** — messages queue until turn ends", %{state | queue_mode: :deferred}}
 
-        more =
-          if length(pending) > 5, do: "\n…and #{length(pending) - 5} more", else: ""
-
-        {:ok, "queue (#{length(pending)}):\n#{preview}#{more}", state}
+      _ ->
+        mode_label = if state.queue_mode == :instant, do: "⚡ instant", else: "⏸ deferred"
+        pending_info =
+          case state.pending do
+            [] -> "empty"
+            pending ->
+              preview =
+                pending
+                |> Enum.take(5)
+                |> Enum.map(fn {text, _ts} -> "• #{String.slice(text, 0, 80)}" end)
+                |> Enum.join("\n")
+              more = if length(pending) > 5, do: "\n…and #{length(pending) - 5} more", else: ""
+              "#{length(pending)} pending:\n#{preview}#{more}"
+          end
+        {:handled, "📬 queue mode: #{mode_label}\n#{pending_info}\n\n`/queue instant` — inject mid-turn\n`/queue deferred` — queue until turn ends", state}
     end
   end
 
@@ -312,6 +395,8 @@ defmodule Smaxr.Agent do
         {state, total_steps, false}
 
       true ->
+        # Pick up any instant-injected messages that arrived during the previous step
+        state = drain_instant_inject(state)
         typing_pid = start_typing_loop(state)
         Logger.info("[agent #{state.user_id}] LLM call (step #{step})")
         result = call_llm(state, step)
@@ -751,6 +836,8 @@ defmodule Smaxr.Agent do
   end
 
   defp reply_to_user(state, text, parse_mode) do
+    text = strip_dcp_tags(text)
+
     Logger.info(
       "[agent #{state.user_id}] send (len=#{byte_size(text)}): #{String.slice(text, 0, 80)}"
     )
@@ -777,6 +864,13 @@ defmodule Smaxr.Agent do
       text
     end
   end
+
+  defp strip_dcp_tags(text) when is_binary(text) do
+    text
+    |> String.replace(~r/<dcp-message-id>m\d+<\/dcp-message-id>\n?/, "")
+  end
+
+  defp strip_dcp_tags(text), do: text
 
   defp escape_html(text) when is_binary(text) do
     text
