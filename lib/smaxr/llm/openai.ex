@@ -143,6 +143,13 @@ defmodule Smaxr.LLM.OpenAI do
   end
   defp strip_thinking(other), do: other || ""
 
+  @doc """
+  Test-only entry point: parse a raw response body as if it came
+  from the API. Used by Smaxr.AgentDCPTest to verify reasoning_content
+  capture.
+  """
+  def parse_result_for_test(body), do: parse_result(body)
+
   @spec models() :: [String.t()]
   def models do
     base_url = get_config(:base_url, @default_base_url)

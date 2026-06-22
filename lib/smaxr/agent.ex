@@ -95,7 +95,7 @@ defmodule Smaxr.Agent do
           "/#{cmd} #{args} -> #{String.slice(reply, 0, 200)}"
         )
 
-        reply_to_user(new_state, reply, :text)
+        reply_to_user(new_state, reply, :markdown)
         {:noreply, new_state}
 
       nil ->
@@ -137,7 +137,7 @@ defmodule Smaxr.Agent do
       {:command, cmd, args} ->
         send_input_marker(state, "/" <> data)
         {:handled, reply, new_state} = Smaxr.Commands.execute(cmd, args, :telegram, state)
-        reply_to_user(new_state, reply, :text)
+        reply_to_user(new_state, reply, :markdown)
         {:noreply, new_state}
 
       nil ->
@@ -698,10 +698,18 @@ defmodule Smaxr.Agent do
         chat_log(state.user_id, "compress", "topic=#{topic} ranges=#{length(ranges)}")
 
         compressed_block = compress_block_message(topic, ranges)
+        compressed_block = %{compressed_block | m_id: length(renumbered) + 1}
         final = renumbered ++ [compressed_block]
         %{state | messages: final}
     end
   end
+
+  @doc """
+  Test-only entry point: applies any pending :smaxr_compress in
+  Process dict to `state.messages` and returns the new state. Used
+  by Smaxr.AgentDCPTest.
+  """
+  def apply_pending_compress_for_test(state), do: apply_pending_compress(state)
 
   defp splice_range({start_idx, end_idx, _summary}, messages) do
     before = Enum.take(messages, start_idx - 1)
@@ -885,6 +893,13 @@ defmodule Smaxr.Agent do
     next_id = length(state.messages) + 1
     %{state | messages: state.messages ++ [%{message | m_id: next_id}]}
   end
+
+  @doc """
+  Test-only entry point: appends `message` to `state.messages`,
+  assigning it a fresh m_id. Mirrors the private push/2 used by
+  handle_cast. Used by Smaxr.AgentDCPTest.
+  """
+  def push_for_test(state, message), do: push(state, message)
 
   defp push_button(state, data) do
     push(state, Message.user("button: #{data}"))
