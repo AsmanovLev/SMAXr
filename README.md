@@ -16,7 +16,7 @@ This is the Elixir successor to [SMAGo](https://github.com/AsmanovLev/SMAGo).
 - **Async turn** — `/stop` and `/abort` interrupt the LLM loop at the next step boundary
 - **Auto-inject** — messages received while the agent is busy are queued and merged into context on the next turn
 - **Model registry** — `Smaxr.Models` GenServer with ETS cache, 10-min TTL
-- **DCP** — Dynamic Context Pruning (off by default)
+- **DCP** — model-driven context compression via `compress` tool with `mN` message ids. Architecture from [opencode-dcp](https://github.com/Opencode-DCP/opencode-dynamic-context-pruning). Off by default; enable with `config :smaxr, :dcp_enabled, true`.
 
 ## Setup
 

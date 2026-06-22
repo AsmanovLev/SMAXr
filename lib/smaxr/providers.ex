@@ -35,6 +35,7 @@ defmodule Smaxr.Providers do
   @spec list() :: [%{id: String.t(), label: String.t(), module: module(), index: pos_integer()}]
   def list do
     Application.get_env(:smaxr, Smaxr.Providers, [])
+    |> Keyword.get(:providers, [])
     |> Enum.with_index(1)
     |> Enum.map(fn {p, i} ->
       %{

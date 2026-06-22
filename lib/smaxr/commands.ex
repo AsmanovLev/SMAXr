@@ -267,15 +267,46 @@ defmodule Smaxr.Commands do
     {:handled, "SMAXr #{sha} (model: #{model}, provider: #{provider})", state}
   end
 
-  # /dcp — DCP control (stub)
-  def cmd_dcp(_, state) do
-    msg = "message count: #{state.message_count}\nDCP: not yet implemented"
-    {:handled, msg, state}
+  # /dcp — toggle DCP. Off by default; on means the model can use the
+  # `compress` tool to replace closed ranges with summaries. We also
+  # run the server-side heuristics (token budget, dedup tool cycles,
+  # tombstones) on every call.
+  def cmd_dcp(args, state) do
+    arg = String.trim(args)
+
+    cond do
+      arg in ~w(on enable 1 true yes) ->
+        Application.put_env(:smaxr, :dcp_enabled, true)
+        {:handled, "DCP enabled (model-driven + server-side heuristics).", state}
+
+      arg in ~w(off disable 0 false no) ->
+        Application.put_env(:smaxr, :dcp_enabled, false)
+        {:handled, "DCP disabled.", state}
+
+      true ->
+        cur = Application.get_env(:smaxr, :dcp_enabled, false)
+        {:handled, "DCP is currently #{if cur, do: "ON", else: "OFF"}.\nUse `/dcp on` or `/dcp off`.", state}
+    end
   end
 
-  # /compress — compress conversation (stub)
+  # /compress — manual trigger of DCP compression via the `compress` tool
+  # isn't a direct command (the model decides when to use it). This
+  # command reports whether the model has a compress tool registered
+  # in the current request.
   def cmd_compress(_, state) do
-    {:handled, "compressing conversation (stub)", state}
+    enabled = Application.get_env(:smaxr, :dcp_enabled, false)
+    n = length(state.messages)
+
+    msg =
+      if enabled do
+        "DCP is ON. The model has access to the `compress` tool and decides " <>
+          "when to call it. #{n} messages in current history."
+      else
+        "DCP is OFF. Enable with `/dcp on` to expose the `compress` tool " <>
+          "to the model. #{n} messages in current history."
+      end
+
+    {:handled, msg, state}
   end
 
   # /stop — cancel the in-progress LLM turn at the next step boundary
