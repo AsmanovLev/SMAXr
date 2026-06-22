@@ -1,20 +1,36 @@
 # SMAXr Windows installer & configurator
 # Usage: irm https://raw.githubusercontent.com/AsmanovLev/SMAXr/main/scripts/configure.ps1 | iex
 #
+# Supports Windows 7+ (PowerShell 2.0+).
 # Does NOT require admin. Installs to $env:LOCALAPPDATA\smaxr.
 # Reversible: schtasks /Delete /TN SMAXr-Agent /F + rm -r $env:LOCALAPPDATA\smaxr
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+# Detect OS + PowerShell version
+$PSVer = $PSVersionTable.PSVersion
+$isWin7 = ($PSVer.Major -le 2)
+
+if ($isWin7) {
+  Write-Host "*** Windows 7 detected. PowerShell 2.0 limited. Install WMF 5.1 if possible." -ForegroundColor Yellow
+  Write-Host "    https://www.microsoft.com/en-us/download/details.aspx?id=54616" -ForegroundColor Yellow
+  Write-Host ""
+
+  # On Win7 Erlang/OTP 24.3.4.14 (max), Elixir 1.14.5 (max)
+  $ElixirPortableUrl = 'https://github.com/elixir-lang/elixir/releases/download/v1.14.5/elixir-otp-24.zip'
+  $ElixirVersion     = '1.14.5 (requires Erlang/OTP 24)'
+  $ElixirExtractDir  = 'elixir-otp-24'
+} else {
+  $ElixirPortableUrl = 'https://github.com/elixir-lang/elixir/releases/download/v1.16.2/elixir-otp-26.zip'
+  $ElixirVersion     = '1.16.2 (requires Erlang/OTP 26+)'
+  $ElixirExtractDir  = 'elixir-otp-26'
+}
+
 $RepoUrl  = 'https://github.com/AsmanovLev/SMAXr.git'
 $RepoDir  = Join-Path $env:LOCALAPPDATA 'smaxr\repo'
 $Runtime  = Join-Path $env:LOCALAPPDATA 'smaxr\runtime'
 $TaskName = 'SMAXr-Agent'
-
-# Portable Elixir URL (stable, GitHub releases)
-$ElixirPortableUrl = 'https://github.com/elixir-lang/elixir/releases/download/v1.16.2/elixir-otp-26.zip'
-$ElixirVersion     = '1.16.2 (requires Erlang/OTP 26+)'
 
 function Test-Cmd([string]$name) {
   return [bool](Get-Command $name -ErrorAction SilentlyContinue)
@@ -28,10 +44,12 @@ function Read-Choice([string]$prompt, [string[]]$valid) {
   }
 }
 
-# Update or append KEY=VALUE in .env
+# Update or append KEY=VALUE in .env (PS2-compatible, no -Raw)
 function Set-EnvValue([string]$file, [string]$key, [string]$value) {
   $content = ''
-  if (Test-Path $file) { $content = Get-Content $file -Raw -ErrorAction SilentlyContinue }
+  if (Test-Path $file) {
+    $content = [System.IO.File]::ReadAllText($file)
+  }
   $line = "$key=$value"
   if ($content -and ($content -match "(?m)^$key=")) {
     $content = [regex]::Replace($content, "(?m)^$key=.*$", $line)
@@ -40,35 +58,51 @@ function Set-EnvValue([string]$file, [string]$key, [string]$value) {
   } else {
     $content = $line + "`r`n"
   }
-  Set-Content -Path $file -Value $content -NoNewline -Encoding UTF8
+  [System.IO.File]::WriteAllText($file, $content)
 }
 
 # ─── Phase 1: pre-flight ────────────────────────────────────────────
 Clear-Host
 Write-Host "=== SMAXr pre-flight ===" -ForegroundColor Cyan
-$hasWinget = Test-Cmd 'winget'
+$hasWinget   = Test-Cmd 'winget'
+$hasChoco    = (-not $isWin7)  # choco only relevant on modern Windows
+if ($isWin7) { $hasWinget = $false; $hasChoco = Test-Cmd 'choco' }
 $hasGit    = Test-Cmd 'git'
 $hasErl    = Test-Cmd 'erl'
 $hasElixir = Test-Cmd 'elixir'
 
 function Ind([bool]$ok) { if ($ok) {'OK         '} else {'MISSING    '} }
-Write-Host ("winget       " + (Ind $hasWinget) + $(if ($hasWinget) {'available'} else {'not found'}))
+Write-Host ("PowerShell  " + (Ind $true) + "$($PSVer.Major).$($PSVer.Minor)")
+Write-Host ("winet       " + (Ind $hasWinget) + $(if ($hasWinget) {'available'} else {'not found (Win7, use chocolatey/manual)'}))
+if ($isWin7) {
+  Write-Host ("chocolatey  " + (Ind $hasChoco) + $(if ($hasChoco) {'available'} else {"install: https://chocolatey.org/install"}))
+}
 Write-Host ("git          " + (Ind $hasGit)    + $(if ($hasGit)    {'installed'} else {'install: https://git-scm.com/download/win'}))
-Write-Host ("Erlang/OTP   " + (Ind $hasErl)    + $(if ($hasErl)    {'installed'} else {'install: https://www.erlang.org/downloads'}))
-Write-Host ("Elixir       " + (Ind $hasElixir) + $(if ($hasElixir) {'installed'} else {"portable: $ElixirPortableUrl"}))
+Write-Host ("Erlang/OTP   " + (Ind $hasErl)    + $(if ($hasErl)    {'installed'} else {"install: $(if ($isWin7) {'OTP 24 (max) from https://www.erlang.org/downloads'} else {'https://www.erlang.org/downloads'})"}))
+Write-Host ("Elixir       " + (Ind $hasElixir) + $(if ($hasElixir) {'installed'} else {"portable: $ElixirVersion"}))
 
 # ─── Phase 2: install strategy (only if something missing) ──────────
 $needsInstall = -not ($hasGit -and $hasErl -and $hasElixir)
 if ($needsInstall) {
   Write-Host ""
   Write-Host "How to install missing prerequisites?" -ForegroundColor Cyan
-  Write-Host "  1. winget install" -ForegroundColor $(if ($hasWinget) {'White'} else {'DarkGray'})
-  if (-not $hasWinget) { Write-Host "     (winget not available — option disabled)" -ForegroundColor DarkGray }
+  $valid = @()
+  if ($hasWinget) {
+    Write-Host "  1. winget install (recommended)"
+    $valid += '1'
+  } elseif ($isWin7) {
+    Write-Host "  1. (winget unavailable on Win7)" -ForegroundColor DarkGray
+  }
   Write-Host "  2. portable download (Elixir only, no admin)"
-  Write-Host "  3. skip (install manually, exit)"
-  $valid = @('1','2','3')
-  if (-not $hasWinget) { $valid = @('2','3') }
-  $strategy = Read-Choice 'Strategy (1/2/3)' $valid
+  $valid += '2'
+  if ($isWin7) {
+    Write-Host "  3. chocolatey (if installed)"
+    if ($hasChoco) { $valid += '3' }
+  } else {
+    Write-Host "  3. skip (install manually, exit)"
+    $valid += '3'
+  }
+  $strategy = Read-Choice "Strategy ($($valid -join '/'))" $valid
 
   switch ($strategy) {
     '1' {
@@ -83,36 +117,71 @@ if ($needsInstall) {
       }
       Write-Host ""
       Write-Host "Installed. Reopen PowerShell for PATH, then re-run this script." -ForegroundColor Yellow
-      Write-Host "  irm $PSCommandPath | iex" -ForegroundColor Yellow
+      Write-Host "  irm https://raw.githubusercontent.com/AsmanovLev/SMAXr/win7-support/scripts/configure.ps1 | iex" -ForegroundColor Yellow
       exit 0
     }
     '2' {
-      # Elixir portable
+      # Elixir portable (PS2-compatible download)
       if (-not (Test-Path $Runtime)) { New-Item -ItemType Directory -Force -Path $Runtime | Out-Null }
       $zip = Join-Path $Runtime 'elixir.zip'
       Write-Host "  Downloading Elixir $ElixirVersion ..." -ForegroundColor Cyan
       try {
-        Invoke-WebRequest -Uri $ElixirPortableUrl -OutFile $zip -UseBasicParsing
+        $wc = New-Object System.Net.WebClient
+        Write-Output "  (this may take a moment, ~10-15 MB)"
+        $wc.DownloadFile($ElixirPortableUrl, $zip)
+        Write-Output ""
       } catch {
         Write-Host "  Download failed: $_" -ForegroundColor Red
         exit 1
       }
-      Expand-Archive $zip -DestinationPath $Runtime -Force
-      Remove-Item (Join-Path $Runtime 'elixir-otp-26') -Recurse -Force -ErrorAction SilentlyContinue
-      Move-Item (Join-Path $Runtime 'elixir-otp-26') (Join-Path $Runtime 'elixir') -Force
+      # Extract (PS2-compatible via Shell.Application or ZipFile)
+      try {
+        Add-Type -AssemblyName 'System.IO.Compression.FileSystem' -ErrorAction Stop
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $Runtime)
+      } catch {
+        # Fallback: Shell.Application COM (PS2)
+        $shell = New-Object -ComObject Shell.Application
+        $zipObj = $shell.NameSpace($zip)
+        $dest = $shell.NameSpace($Runtime)
+        $dest.CopyHere($zipObj.Items(), 16)
+      }
+      # Rename extracted dir
+      $extracted = Join-Path $Runtime $ElixirExtractDir
+      $elixirDir = Join-Path $Runtime 'elixir'
+      if (Test-Path $extracted) {
+        Remove-Item $elixirDir -Recurse -Force -ErrorAction SilentlyContinue
+        Move-Item $extracted $elixirDir -Force
+      }
       Remove-Item $zip
-      $env:PATH = "$(Join-Path $Runtime 'elixir\bin');$env:PATH"
-      Write-Host "  Elixir installed: $Runtime\elixir\bin" -ForegroundColor Green
+      $env:PATH = "$(Join-Path $elixirDir 'bin');$env:PATH"
+      Write-Host "  Elixir installed: $elixirDir\bin" -ForegroundColor Green
       Write-Host ""
-      Write-Host "  Erlang portable: NOT available (no stable Erlang/OTP Windows zip)" -ForegroundColor Yellow
-      Write-Host "  Install Erlang manually:" -ForegroundColor Yellow
-      Write-Host "    - Microsoft Store: search 'Erlang OTP'" -ForegroundColor Yellow
-      Write-Host "    - Browser:         https://www.erlang.org/downloads" -ForegroundColor Yellow
+
+      if ($isWin7) {
+        Write-Host "  Note: Erlang/OTP 24.3.4.14 is the last Win7-compatible version." -ForegroundColor Yellow
+        Write-Host "  Install Erlang:" -ForegroundColor Yellow
+        Write-Host "    - Browser: https://www.erlang.org/downloads (choose OTP 24.x)" -ForegroundColor Yellow
+        Write-Host "    - Chocolatey: choco install erlang --version 24.3.4.14" -ForegroundColor Yellow
+      } else {
+        Write-Host "  Install Erlang:" -ForegroundColor Yellow
+        Write-Host "    - winget: winget install Erlang.Erlang" -ForegroundColor Yellow
+        Write-Host "    - Browser: https://www.erlang.org/downloads" -ForegroundColor Yellow
+        Write-Host "    - Microsoft Store: 'Erlang OTP'" -ForegroundColor Yellow
+      }
       Write-Host "  After Erlang is installed, re-run this script." -ForegroundColor Yellow
       exit 0
     }
     '3' {
-      Write-Host "Install manually, then re-run this script." -ForegroundColor Yellow
+      if ($isWin7 -and $hasChoco) {
+        # chocolatey install
+        Write-Host "  Installing via chocolatey..." -ForegroundColor Cyan
+        if (-not $hasGit)    { choco install git -y }
+        if (-not $hasErl)    { choco install erlang --version 24.3.4.14 -y }
+        if (-not $hasElixir) { choco install elixir -y }
+        Write-Host "  Installed. Reopen PowerShell, re-run this script." -ForegroundColor Yellow
+      } else {
+        Write-Host "Install manually, then re-run this script." -ForegroundColor Yellow
+      }
       exit 0
     }
   }
@@ -155,7 +224,8 @@ Write-Host ""
 Write-Host "=== Configuration ===" -ForegroundColor Cyan
 $existing = @{}
 if (Test-Path $EnvFile) {
-  Get-Content $EnvFile | ForEach-Object {
+  $content = [System.IO.File]::ReadAllText($EnvFile)
+  foreach ($_ in ($content -split "`n")) {
     if ($_ -match '^([^#=]+)=(.*)$') { $existing[$Matches[1]] = $Matches[2] }
   }
 }
@@ -229,9 +299,16 @@ if ($auto -match '^[Yy]') {
 "@
   $xmlPath = Join-Path $env:TEMP 'smaxr_task.xml'
   $xml | Out-File $xmlPath -Encoding Unicode
-  schtasks /Create /TN $TaskName /XML $xmlPath /F | Out-Null
+  $x = schtasks /Create /TN $TaskName /XML $xmlPath /F 2>&1
   Remove-Item $xmlPath
-  Write-Host "  Registered: $TaskName" -ForegroundColor Green
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host "  Registered: $TaskName" -ForegroundColor Green
+  } elseif ($LASTEXITCODE -eq 1) {
+    Write-Host "  Task Scheduler registration failed (run as admin?): $x" -ForegroundColor Yellow
+    Write-Host "  Add manually: $startBat → Windows Startup folder" -ForegroundColor Yellow
+  } else {
+    Write-Host "  Registered (exit code: $LASTEXITCODE)" -ForegroundColor Green
+  }
 } else {
   Write-Host "  Autostart: not registered" -ForegroundColor DarkGray
 }
