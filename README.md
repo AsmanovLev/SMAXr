@@ -37,7 +37,7 @@ start.bat        # or start.sh on Unix
 ### Requirements
 
 - **main branch**: Elixir 1.20+, Erlang/OTP 27+
-- **win7-support branch**: Elixir 1.14.5, Erlang/OTP 24 (max versions for Windows 7)
+- **win7-support branch**: Elixir 1.14+, Erlang/OTP 24 (max for Windows 7)
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - An OpenCode Go API key (or any OpenAI-compatible endpoint)
 
