@@ -1027,10 +1027,6 @@ defmodule Smaxr.Agent do
       - Prefer **one-liner pipelines** that work in PowerShell 5+ (no PS7-only syntax like `??` or `??=`).
       - If a command must contain a literal backtick (rare), double it: `` \\`\\` `` — but prefer avoiding backticks entirely.
 
-      ### MCP safety
-      - Changing MCP config via `Application.put_env(:smaxr, :mcp_servers, ...)` + restarting `Smaxr.MCP` GenServer is **dangerous**. A misconfigured server (bad command, missing runtime) causes the MCP GenServer init to crash, which crashes the supervisor, which will crash the **entire bot**. Instead, use `mcp_control(action: "enable/disable")` which restarts servers without touching the MCP GenServer itself.
-      - To add a new MCP server: write its config to a file, then ask the user to restart the bot. The config is read at boot from `config.exs`.
-
       ### Workdir
       #{File.cwd!()}
       """ <> if(extra != "", do: "\n## Extra context\n#{extra}", else: "")
